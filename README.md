@@ -1,5 +1,17 @@
 # tjGameEngine
 
-This project is about me learning how to draw graphics in a low level way. Yes, I know there are libraries like SDL which can make my life much much easier, but I am going to do it this way. 
+## Overview
 
-The main agenda here is to learn X11 library and make a game engine which can be used to complete our nesEmulator. 
+**tjGameEngine** is a simple c++ class that creates a window using X11 library and allows for pixel manipulation and drawing directly onto the window. I am developing this project to facilitate graphics rendering in a NES emulator, another project that I am working on.
+
+## Installation
+
+Ensure you have X11 development libraries installed in your system.
+
+I have an Arch system. If you do too, run:
+
+```bash
+sudo pacman -S libx11-dev
+```
+
+Just put tjGameEngine.h in your project and include it when compiling your project.
