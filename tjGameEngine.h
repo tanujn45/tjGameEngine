@@ -1,14 +1,17 @@
 #pragma once
 
 #include <X11/X.h>
+#include <X11/XKBlib.h>
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <sys/types.h>
 
+#include <atomic>
 #include <cstdint>
 #include <iostream>
 #include <map>
 #include <string>
+#include <thread>
 
 using namespace std;
 
@@ -20,15 +23,19 @@ struct Button {
 
 class tjGameEngine {
    private:
-    Display *display;
+    Display* display;
     Window rootWin;
     Window win;
     GC gc;
 
+    atomic<bool> threadActive;
     uint32_t viewportWidth;
     uint32_t viewportHeight;
     uint32_t pixelWidth;
     uint32_t pixelHeight;
+
+    uint32_t rootWidth;
+    uint32_t rootHeight;
 
    public:
     enum Key {
@@ -440,17 +447,26 @@ class tjGameEngine {
     void setMapKeySym();
     void updateKeyState(KeySym sym, bool flag);
 
+    virtual bool Create();
+    virtual bool Update();
+    virtual bool Destroy();
+
    public:
     tjGameEngine();
     ~tjGameEngine();
 
-    void createWindow(int width, int height, int pixelWidth, int pixelHeight);
+    void Construct(int width, int height, int pixelWidth, int pixelHeight);
+    void Start();
+
+   public:
+    void createWindow();
     void setWindowName(string name);
 
     void updateWindow();
     void destroyWindow();
 
-    void drawPixel(uint x, uint y, uint32_t color);
+   public:
+    void DrawPixel(uint x, uint y, uint32_t color);
 
     uint32_t getWindowWidth();
     uint32_t getWindowHeight();
@@ -461,26 +477,208 @@ class tjGameEngine {
     // Helper
     // functions
     uint32_t rgb(uint8_t r, uint8_t g, uint8_t b);
-    void redraw(uint32_t color);
+    void Clear(uint32_t color);
 };
 
-/*
- * This is what I am
- * going to do with
- * this library
- *   - Generate a
- * window
- *   - Set it's
- * width and height
- *   - Define pixel
- * width and height
- *   - Check for
- * user input
- *       - this can
- * be keyboard input
- * or mouse input
- *   - Redraw the
- * window
- *   - Destroy the
- * window
- */
+inline tjGameEngine::tjGameEngine() {
+}
+
+inline tjGameEngine::~tjGameEngine() {
+}
+
+inline void tjGameEngine::Construct(int width, int height, int pixelWidth, int pixelHeight) {
+    this->pixelWidth = pixelWidth;
+    this->pixelHeight = pixelHeight;
+    this->viewportWidth = width * pixelWidth;
+    this->viewportHeight = height * pixelHeight;
+}
+
+inline void tjGameEngine::Start() {
+    // Construct the window
+    createWindow();
+    threadActive = true;
+    thread t = thread(&tjGameEngine::updateWindow, this);
+
+    t.join();
+    // Destroy everything, mhahahaha!!!
+    destroyWindow();
+}
+
+inline void tjGameEngine::createWindow() {
+    // Allow threads
+    XInitThreads();
+
+    // Open a connection to the X Server
+    display = XOpenDisplay(NULL);
+    if (!display) {
+        cerr << "Cannot open display\n";
+        exit(EXIT_FAILURE);
+    }
+
+    int screen = DefaultScreen(display);
+
+    // Get the dimensions of the montitor
+    // and check if the window will fit inside
+    rootWin = RootWindow(display, screen);
+    int rootX, rootY;
+    uint32_t rootBorderWidth, depth;
+    XGetGeometry(display, rootWin, &rootWin, &rootX, &rootY, &rootWidth, &rootHeight, &rootBorderWidth, &depth);
+
+    /*cout << "Root window width " << rootWidth << endl;*/
+    /*cout << "Root window height " << rootHeight << endl;*/
+    /**/
+    /*cout << "viewport window width " << viewportWidth << endl;*/
+    /*cout << "viewport window height " << viewportHeight << endl;*/
+    /**/
+    /*cout << "rootX " << rootX << endl;*/
+    /*cout << "rootY " << rootY << endl;*/
+
+    if (rootWidth < viewportWidth || rootHeight < viewportHeight) {
+        cerr << "Desired dimensions do not fit the screen\n";
+        exit(EXIT_FAILURE);
+    }
+
+    // Create a window
+    win = XCreateSimpleWindow(display, RootWindow(display, 0), 0, 0, viewportWidth, viewportHeight, 0, 0x000000,
+                              0xFFFFFF);
+
+    // Set name of the window
+    XStoreName(display, win, "tjGameEngine");
+    gc = XCreateGC(display, win, 0, NULL);
+    XMapWindow(display, win);
+
+    // Events that will be read;
+    eventMask = KeyPressMask | KeyReleaseMask;
+    XSelectInput(display, win, eventMask);
+
+    Bool supported;
+    if (XkbSetDetectableAutoRepeat(display, true, &supported)) {
+        if (supported) {
+            cout << "Auto detect supported" << endl << flush;
+        } else {
+            cout << "Auto detect not supported" << endl << flush;
+        }
+    } else {
+        cout << "Auto detect is not set" << endl << flush;
+    }
+
+    /*XAutoRepeatOff(display);*/
+}
+
+inline void tjGameEngine::destroyWindow() {
+    /*XAutoRepeatOn(display);*/
+    XFreeGC(display, gc);
+    XUnmapWindow(display, win);
+    XDestroyWindow(display, win);
+    XCloseDisplay(display);
+}
+
+inline void tjGameEngine::updateWindow() {
+    bool created = Create();
+    if (!created) {
+        threadActive = false;
+    }
+
+    while (threadActive) {
+        bool ifUpdated = Update();
+        if (!ifUpdated) {
+            threadActive = false;
+        }
+        handleEvents();
+        if (!tjGameEngine::Destroy()) {
+            threadActive = true;
+        }
+    }
+}
+
+inline bool tjGameEngine::Create() {
+    return false;
+}
+
+inline bool tjGameEngine::Update() {
+    return false;
+}
+
+inline bool tjGameEngine::Destroy() {
+    return true;
+}
+
+inline uint32_t tjGameEngine::rgb(uint8_t r, uint8_t g, uint8_t b) {
+    return r | (g << 8) | (b << 16) | (0xFF << 24);
+}
+
+inline void tjGameEngine::DrawPixel(uint x, uint y, uint32_t color) {
+    XSetForeground(display, gc, color);
+    XFillRectangle(display, win, gc, x * pixelWidth, y * pixelHeight, pixelWidth, pixelHeight);
+}
+
+inline void tjGameEngine::Clear(uint32_t color) {
+    XSetForeground(display, gc, color);
+    XFillRectangle(display, win, gc, 0, 0, viewportWidth, viewportHeight);
+}
+
+inline uint32_t tjGameEngine::getWindowWidth() {
+    return viewportWidth / pixelWidth;
+}
+
+inline uint32_t tjGameEngine::getWindowHeight() {
+    return viewportHeight / pixelHeight;
+}
+
+inline void tjGameEngine::handleEvents() {
+    XEvent xev, xnev;
+    while (XPending(display)) {
+        XNextEvent(display, &xev);
+        if (xev.type == KeyPress) {
+            KeySym sym = XLookupKeysym(&xev.xkey, 0);
+            updateKeyState(sym, true);
+
+            /*XPeekEvent(display, &xnev);*/
+            /*if (xnev.type == KeyRelease) {*/
+            /*    if (xev.xany.serial == xnev.xany.serial) {*/
+            /*        XNextEvent(display, &xnev);*/
+            /*        cout << "Same serial of the even, therefore ignoring" << endl << flush;*/
+            /*    } else {*/
+            /*        cout << "Am I ever coming here" << endl << flush;*/
+            /*        updateKeyState(sym, false);*/
+            /*    }*/
+            /*}*/
+        } else if (xev.type == KeyRelease) {
+            KeySym sym = XLookupKeysym(&xev.xkey, 0);
+            updateKeyState(sym, false);
+        }
+    }
+}
+
+inline void tjGameEngine::updateKeyState(KeySym sym, bool flag) {
+    auto it = X11ToKey.find(sym);
+    if (it == X11ToKey.end()) {
+        return;
+    }
+    Key key = it->second;
+
+    if (mapKeySym.find(key) == mapKeySym.end()) {
+        mapKeySym[key] = {false, false, false};
+        cout << "Init key " << key << endl << flush;
+    }
+
+    auto& keyState = mapKeySym[key];
+    if (flag) {
+        if (!keyState.isHeld) {
+            keyState.isPressed = true;
+            keyState.isHeld = true;
+            keyState.isReleased = false;
+            cout << "key " << key << " is pressed" << endl << flush;
+        } else {
+            keyState.isPressed = false;
+            cout << "key " << key << " is held down" << endl << flush;
+        }
+    } else {
+        if (keyState.isHeld) {
+            keyState.isReleased = true;
+        }
+        keyState.isPressed = false;
+        keyState.isHeld = false;
+        cout << "key " << key << " is released" << endl << flush;
+    }
+}
